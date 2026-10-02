@@ -2,278 +2,185 @@ package main
 
 import (
 	"bufio"
-	"errors"
 	"fmt"
-	"io"
 	"os"
 	"strconv"
 	"strings"
 )
 
-// Part 5 — Menu tổng hợp.
-//
-// PDF dùng fmt.Scanln(&choice) với choice là int. Nếu người dùng nhập chữ thì
-// Scanln fail nhưng để nguyên ký tự trong buffer, nên vòng for sẽ quay vô hạn
-// in menu liên tục. Ở đây đọc cả dòng bằng bufio.Reader rồi tự parse, và return
-// khi gặp EOF để không treo khi chạy qua pipe.
+// FoodItem represents a menu item.
+type FoodItem struct {
+	Name      string
+	Price     float64
+	Category  string
+	Available bool
+}
 
-// readLine đọc một dòng từ reader. err != nil nghĩa là EOF hoặc lỗi I/O.
-func readLine(reader *bufio.Reader, prompt string) (string, error) {
-	fmt.Print(prompt)
+// OrderLine represents one food item and its quantity inside an order.
+type OrderLine struct {
+	Item     FoodItem
+	Quantity int
+}
 
-	line, err := reader.ReadString('\n')
-	if err != nil {
-		// Vẫn có thể có dữ liệu trước EOF (dòng cuối không có '\n').
-		trimmed := strings.TrimSpace(line)
-		if trimmed != "" {
-			return trimmed, nil
+// Order represents a customer order containing several order lines.
+type Order struct {
+	Lines []OrderLine
+}
+
+// menu is the slice holding all food items.
+var menu = []FoodItem{
+	{Name: "Chicken Rice", Price: 45000, Category: "Main Dish", Available: true},
+	{Name: "Beef Noodle", Price: 50000, Category: "Main Dish", Available: true},
+	{Name: "Fried Rice", Price: 40000, Category: "Main Dish", Available: false},
+	{Name: "Milk Tea", Price: 25000, Category: "Drink", Available: true},
+	{Name: "Iced Coffee", Price: 20000, Category: "Drink", Available: true},
+	{Name: "Cheesecake", Price: 35000, Category: "Dessert", Available: false},
+	{Name: "Ice Cream", Price: 15000, Category: "Dessert", Available: true},
+}
+
+// menuByName is a map used for fast lookup of a food item by its name.
+var menuByName = buildMenuByName(menu)
+
+// buildMenuByName builds the lookup map from the menu slice.
+func buildMenuByName(items []FoodItem) map[string]FoodItem {
+	m := make(map[string]FoodItem)
+	for _, item := range items {
+		m[item.Name] = item
+	}
+	return m
+}
+
+// DisplayAvailableFood prints every food item in the menu that is available.
+func DisplayAvailableFood(items []FoodItem) {
+	fmt.Println("Available food:")
+	for _, item := range items {
+		if item.Available {
+			fmt.Printf("- %s | %s | %.0f VND\n", item.Name, item.Category, item.Price)
 		}
-		return "", err
 	}
-
-	return strings.TrimSpace(line), nil
 }
 
-// readInt đọc một số nguyên. Enter rỗng trả về defaultValue.
-func readInt(reader *bufio.Reader, prompt string, defaultValue int) (int, error) {
-	line, err := readLine(reader, prompt)
-	if err != nil {
-		return 0, err
-	}
-	if line == "" {
-		return defaultValue, nil
-	}
-
-	value, err := strconv.Atoi(line)
-	if err != nil {
-		return 0, fmt.Errorf("%q không phải số nguyên hợp lệ", line)
-	}
-	return value, nil
+// SearchFoodByName looks up a food item by exact name using the map.
+func SearchFoodByName(name string) (FoodItem, bool) {
+	item, ok := menuByName[name]
+	return item, ok
 }
 
-// readFloat đọc một số thực. Enter rỗng trả về defaultValue.
-func readFloat(reader *bufio.Reader, prompt string, defaultValue float64) (float64, error) {
-	line, err := readLine(reader, prompt)
-	if err != nil {
-		return 0, err
-	}
-	if line == "" {
-		return defaultValue, nil
-	}
-
-	value, err := strconv.ParseFloat(line, 64)
-	if err != nil {
-		return 0, fmt.Errorf("%q không phải số hợp lệ", line)
-	}
-	return value, nil
+// IsValidQuantity rejects zero or negative quantities.
+func IsValidQuantity(quantity int) bool {
+	return quantity > 0
 }
 
-// isEOF phân biệt lỗi EOF (phải thoát chương trình) với lỗi parse (chỉ cần
-// báo rồi hỏi lại). Dùng errors.Is thay vì so sánh chuỗi err.Error().
-func isEOF(err error) bool {
-	return errors.Is(err, io.EOF)
+// AddFoodToOrder validates the food name, availability, and quantity, then
+// appends the item to the order. It returns an error describing why the
+// item could not be added, if any.
+func AddFoodToOrder(order *Order, name string, quantity int) error {
+	item, ok := SearchFoodByName(name)
+	if !ok {
+		return fmt.Errorf("food not found: %s", name)
+	}
+	if !item.Available {
+		return fmt.Errorf("food unavailable: %s", name)
+	}
+	if !IsValidQuantity(quantity) {
+		return fmt.Errorf("invalid quantity: %d", quantity)
+	}
+	order.Lines = append(order.Lines, OrderLine{Item: item, Quantity: quantity})
+	return nil
 }
 
-func printMenu() {
-	fmt.Println("\n=== Property Analyzer Menu ===")
-	fmt.Println("1. View all properties")
-	fmt.Println("2. Search by budget")
-	fmt.Println("3. Investment analysis")
-	fmt.Println("4. Loan calculator")
-	fmt.Println("5. Get recommendations")
-	fmt.Println("6. Optimize portfolio")
-	fmt.Println("7. District analysis")
-	fmt.Println("8. Run all parts (demo Task 1.1 -> 4.2)")
-	fmt.Println("0. Exit")
+// CalculateSubtotal sums price * quantity for every line in the order.
+func CalculateSubtotal(order Order) float64 {
+	total := 0.0
+	for _, line := range order.Lines {
+		total += line.Item.Price * float64(line.Quantity)
+	}
+	return total
+}
+
+// DiscountThreshold and DiscountRate implement the ADAPT requirement:
+// orders with a subtotal of at least 300,000 VND receive a 10% discount.
+const DiscountThreshold = 300000.0
+const DiscountRate = 0.10
+
+// CalculateDiscount returns the discount amount for a given subtotal.
+func CalculateDiscount(subtotal float64) float64 {
+	if subtotal >= DiscountThreshold {
+		return subtotal * DiscountRate
+	}
+	return 0.0
+}
+
+// DisplayOrderSummary prints each line, the subtotal, the discount, and the
+// final total of the order.
+func DisplayOrderSummary(order Order) {
+	fmt.Println("Order summary:")
+	for _, line := range order.Lines {
+		lineTotal := line.Item.Price * float64(line.Quantity)
+		fmt.Printf("- %s x%d = %.0f VND\n", line.Item.Name, line.Quantity, lineTotal)
+	}
+	subtotal := CalculateSubtotal(order)
+	discount := CalculateDiscount(subtotal)
+	finalTotal := subtotal - discount
+	fmt.Printf("Subtotal: %.0f\n", subtotal)
+	fmt.Printf("Discount: %.0f\n", discount)
+	fmt.Printf("Final Total: %.0f\n", finalTotal)
 }
 
 func main() {
+	order := Order{}
 	reader := bufio.NewReader(os.Stdin)
 
 	for {
-		printMenu()
+		fmt.Println()
+		fmt.Println("1. Display available food")
+		fmt.Println("2. Search food by name")
+		fmt.Println("3. Add food to order")
+		fmt.Println("4. Show order summary")
+		fmt.Println("5. Exit")
+		fmt.Print("Choose an option: ")
 
-		choice, err := readInt(reader, "Choose option: ", -1)
-		if isEOF(err) {
-			fmt.Println("\nEOF nhận được. Goodbye!")
-			return
-		}
-		if err != nil {
-			fmt.Printf("Input không hợp lệ: %v\n", err)
-			continue
-		}
+		choice, _ := reader.ReadString('\n')
+		choice = strings.TrimSpace(choice)
 
 		switch choice {
-		case 1:
-			printHeader("All Properties")
-			printPropertyTable(properties)
+		case "1":
+			DisplayAvailableFood(menu)
+		case "2":
+			fmt.Print("Enter food name: ")
+			name, _ := reader.ReadString('\n')
+			name = strings.TrimSpace(name)
+			item, ok := SearchFoodByName(name)
+			if !ok {
+				fmt.Println("Food not found")
+			} else {
+				fmt.Printf("%s | %s | %.0f VND | Available: %v\n", item.Name, item.Category, item.Price, item.Available)
+			}
+		case "3":
+			fmt.Print("Enter food name: ")
+			name, _ := reader.ReadString('\n')
+			name = strings.TrimSpace(name)
 
-		case 2:
-			if handleSearch(reader) {
-				return
+			fmt.Print("Enter quantity: ")
+			qtyStr, _ := reader.ReadString('\n')
+			qtyStr = strings.TrimSpace(qtyStr)
+			quantity, err := strconv.Atoi(qtyStr)
+			if err != nil {
+				fmt.Println("Invalid quantity input")
+				continue
 			}
 
-		case 3:
-			runTask31()
-
-		case 4:
-			if handleLoan(reader) {
-				return
+			if err := AddFoodToOrder(&order, name, quantity); err != nil {
+				fmt.Println("Error:", err)
+			} else {
+				fmt.Println("Added to order.")
 			}
-
-		case 5:
-			if handleRecommendations(reader) {
-				return
-			}
-
-		case 6:
-			if handlePortfolio(reader) {
-				return
-			}
-
-		case 7:
-			runTask22()
-
-		case 8:
-			runPart1()
-			runPart2()
-			runPart3()
-			runPart4()
-
-		case 0:
-			fmt.Println("Goodbye!")
+		case "4":
+			DisplayOrderSummary(order)
+		case "5":
 			return
-
 		default:
-			fmt.Println("Invalid option!")
+			fmt.Println("Invalid option")
 		}
 	}
-}
-
-// Các handler dưới đây trả true nếu gặp EOF — caller phải thoát chương trình.
-
-func handleSearch(reader *bufio.Reader) bool {
-	budget, err := readFloat(reader, "Nhập budget tối đa (VND, Enter = 3000000000): ", 3000000000)
-	if isEOF(err) {
-		return true
-	}
-	if err != nil {
-		fmt.Printf("Input không hợp lệ: %v\n", err)
-		return false
-	}
-	if budget < 0 {
-		fmt.Println("Budget không được âm.")
-		return false
-	}
-
-	result := findPropertiesInBudget(properties, budget)
-	fmt.Printf("\nProperties under %s (%s):\n", formatVND(budget), formatPrice(budget))
-	printPropertyTable(result)
-
-	bedrooms, err := readInt(reader, "\nLọc thêm theo số phòng ngủ (Enter = bỏ qua, 0 = bỏ qua): ", 0)
-	if isEOF(err) {
-		return true
-	}
-	if err != nil {
-		fmt.Printf("Input không hợp lệ: %v\n", err)
-		return false
-	}
-	if bedrooms > 0 {
-		filtered := findPropertiesByBedrooms(result, bedrooms)
-		fmt.Printf("\nTrong budget và có %d phòng ngủ:\n", bedrooms)
-		printPropertyTable(filtered)
-	}
-
-	return false
-}
-
-func handleLoan(reader *bufio.Reader) bool {
-	downPayment, err := readFloat(reader, "% trả trước (Enter = 20): ", 20)
-	if isEOF(err) {
-		return true
-	}
-	if err != nil {
-		fmt.Printf("Input không hợp lệ: %v\n", err)
-		return false
-	}
-
-	interestRate, err := readFloat(reader, "Lãi suất %/năm (Enter = 8.5): ", 8.5)
-	if isEOF(err) {
-		return true
-	}
-	if err != nil {
-		fmt.Printf("Input không hợp lệ: %v\n", err)
-		return false
-	}
-
-	years, err := readInt(reader, "Số năm (Enter = 20): ", 20)
-	if isEOF(err) {
-		return true
-	}
-	if err != nil {
-		fmt.Printf("Input không hợp lệ: %v\n", err)
-		return false
-	}
-
-	// Validate sớm ở đây để báo lỗi rõ ràng, thay vì để CalculateLoan trả zero.
-	switch {
-	case downPayment < 0 || downPayment > 100:
-		fmt.Printf("Lỗi: %v (nhận %.1f)\n", errInvalidDownPayment, downPayment)
-		return false
-	case interestRate < 0:
-		fmt.Printf("Lỗi: %v (nhận %.1f)\n", errInvalidInterestRate, interestRate)
-		return false
-	case years <= 0:
-		fmt.Printf("Lỗi: %v (nhận %d)\n", errInvalidYears, years)
-		return false
-	}
-
-	runLoanAnalysis(downPayment, interestRate, years)
-	return false
-}
-
-func handleRecommendations(reader *bufio.Reader) bool {
-	budget, err := readFloat(reader, "Budget (VND, Enter = 5000000000): ", 5000000000)
-	if isEOF(err) {
-		return true
-	}
-	if err != nil {
-		fmt.Printf("Input không hợp lệ: %v\n", err)
-		return false
-	}
-
-	maxMonthly, err := readFloat(reader, "Khoản trả tối đa/tháng (VND, Enter = 40000000): ", 40000000)
-	if isEOF(err) {
-		return true
-	}
-	if err != nil {
-		fmt.Printf("Input không hợp lệ: %v\n", err)
-		return false
-	}
-
-	if budget < 0 || maxMonthly < 0 {
-		fmt.Println("Budget và khoản trả tối đa không được âm.")
-		return false
-	}
-
-	runRecommendations(budget, maxMonthly)
-	return false
-}
-
-func handlePortfolio(reader *bufio.Reader) bool {
-	budget, err := readFloat(reader, "Tổng budget (VND, Enter = 8000000000): ", 8000000000)
-	if isEOF(err) {
-		return true
-	}
-	if err != nil {
-		fmt.Printf("Input không hợp lệ: %v\n", err)
-		return false
-	}
-	if budget < 0 {
-		fmt.Println("Budget không được âm.")
-		return false
-	}
-
-	runPortfolioOptimization(properties, monthlyRents, budget)
-	return false
 }
